@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CO₂削減カウンター（Googleマップ版）全てAI試作品</title>
+   <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+</head>
+<body>
+  <div class="container">
+   
+
+    <h1>🌏 CO₂削減カウンター</h1>
+    <p style="text-align:center;">Googleマップで距離を自動計算！</p>
+    <p id="kome">※車のCO2排出量と比較してどれだけ削減したか</p>
+
+    <form id="ecoForm">
+      <label>出発地:</label>
+      <input type="text" id="start" placeholder="例：東京駅" required>
+
+      <label>目的地:</label>
+      <input type="text" id="end" placeholder="例：横浜駅" required>
+
+      <label>交通手段:</label>
+      <select id="transport" required>
+        <option value="train">電車</option>
+        <option value="bus">バス</option>
+        <option value="bicycle">自転車</option>
+        <option value="walk">徒歩</option>
+      </select>
+
+      <button type="submit">距離を計算してCO₂を算出</button>
+    </form>
+
+    <div id="result" class="result"></div>
+    <div id="total" class="total"></div>
+    <div id="define">※1本の成木（スギなど）が年間で約14kgのCO₂を吸収</div>
+
+    <div id="map"></div>
+    <canvas id="chart"></canvas>
+
+ <h2 style="text-align:center;">🌲 削減した木を世界に植えよう！</h2>
+    <div class="map-wrap" id="treeMapWrap">
+      <img src="https://upload.wikimedia.org/wikipedia/commons/8/80/World_map_-_low_resolution.svg"
+           alt="世界地図" class="map-img" id="treeMapImg" />
+    </div>
+    <p style="text-align:center;">累計で植えた木の数：<strong id="treeCount">0</strong> 本</p>
+  </div>
+
+  <script>
+    // 🌳 木アニメーション関連
+    const treeMapWrap = document.getElementById('treeMapWrap');
+    const treeCountEl = document.getElementById('treeCount');
+    let totalTrees = parseInt(localStorage.getItem("totalTrees") || "0");
+
+    const treeSVG = `
+      <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <g>
+          <ellipse cx="32" cy="22" rx="18" ry="12" fill="#2e8b57"/>
+          <ellipse cx="22" cy="26" rx="14" ry="10" fill="#228B22" opacity="0.95"/>
+          <ellipse cx="42" cy="26" rx="14" ry="10" fill="#2E8B57" opacity="0.95"/>
+          <rect x="28" y="28" width="8" height="18" rx="2" fill="#8b5a2b"/>
+        </g>
+      </svg>
+    `;
+
+    function updateTreeCount() {
+      treeCountEl.textContent = totalTrees;
+    }
+
+    function addTreeAtRandom() {
+      const el = document.createElement('div');
+      el.className = 'tree';
+      el.innerHTML = treeSVG;
+      el.style.left = (Math.random() * 98 + 1) + '%';
+      el.style.top = (Math.random() * 82 + 10) + '%';
+      treeMapWrap.appendChild(el);
+    }
+
+    function plantTrees(n) {
+      for (let i = 0; i < n; i++) {
+        setTimeout(() => {
+          addTreeAtRandom();
+          totalTrees++;
+          localStorage.setItem("totalTrees", totalTrees);
+          updateTreeCount();
+        }, i * 80);
+      }
+    }
+
+    updateTreeCount();
+
+    // 🌎 CO₂計算部分
+    const CO2_EMISSIONS = {
+      car: 0.2,
+      bus: 0.1,
+      train: 0.05,
+      bicycle: 0.0,
+      walk: 0.0
+    };
+    const TREE_CO2 = 14;
+
+    let map, directionsService, directionsRenderer;
+    let ecoHistory = JSON.parse(localStorage.getItem("ecoHistory")) || [];
+
+    const resultDiv = document.getElementById("result");
+    const totalDiv = document.getElementById("total");
+    const ctx = document.getElementById("chart").getContext("2d");
+
+    // 合計表示
+    function updateTotal() {
+      const totalCO2 = ecoHistory.reduce((sum, item) => sum + item.savedCO2, 0);
+      const trees = totalCO2 / TREE_CO2;
+      totalDiv.textContent = `🌳 累計で ${totalCO2.toFixed(2)} kg のCO₂を削減！  
+      木にすると約 ${trees.toFixed(1)} 本分の吸収量です。`;
+    }
+
+    // チャート初期化
+    let chart = new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels: ecoHistory.map(item => item.date),
+        datasets: [{
+          label: "削減CO₂量 (kg)",
+          data: ecoHistory.map(item => item.savedCO2),
+          borderWidth: 1,
+          backgroundColor: "#81c784"
+        }]
+      },
+      options: { scales: { y: { beginAtZero: true } } }
+    });
+
+    updateTotal();
+
+    function initMap() {
+      map = new google.maps.Map(document.getElementById("map"), {
+        center: { lat: 35.6812, lng: 139.7671 },
+        zoom: 10
+      });
+      directionsService = new google.maps.DirectionsService();
+      directionsRenderer = new google.maps.DirectionsRenderer();
+      directionsRenderer.setMap(map);
+    }
+
+    document.getElementById("ecoForm").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const start = document.getElementById("start").value;
+      const end = document.getElementById("end").value;
+      const transport = document.getElementById("transport").value;
+
+      const request = {
+        origin: start,
+        destination: end,
+        travelMode: "DRIVING"
+      };
+
+      directionsService.route(request, (result, status) => {
+        if (status === "OK") {
+          directionsRenderer.setDirections(result);
+          const distance = result.routes[0].legs[0].distance.value / 1000;
+
+          const carCO2 = distance * CO2_EMISSIONS.car;
+          const selectedCO2 = distance * CO2_EMISSIONS[transport];
+          const savedCO2 = carCO2 - selectedCO2;
+          const treeEq = savedCO2 / TREE_CO2;
+          const date = new Date().toLocaleDateString("ja-JP");
+
+          resultDiv.textContent = `📏 距離: ${distance.toFixed(2)} km  
+          🚴‍♂️ 削減したCO₂: ${savedCO2.toFixed(2)} kg  
+          🌲 木に換算すると約 ${treeEq.toFixed(2)} 本分！`;
+
+          ecoHistory.push({ date, savedCO2 });
+          localStorage.setItem("ecoHistory", JSON.stringify(ecoHistory));
+
+          chart.data.labels = ecoHistory.map(i => i.date);
+          chart.data.datasets[0].data = ecoHistory.map(i => i.savedCO2);
+          chart.update();
+
+          updateTotal();
+
+          // 木を削減量に応じて植える🌳
+          // 木を削減量に応じて植える🌳
+if (treeEq > 0) {
+  plantTrees(Math.round(treeEq));
+}
+
+
+
+        } else {
+          alert("経路を取得できませんでした。地名を確認してください。");
+        }
+      });
+    });
+  </script>
+
+  <!-- Google Maps API -->
+  <script async
+    src="https://maps.googleapis.com/maps/api/js?key=AIzaSyB0Ueo952rowNyIi4OZtPbjKhfGx6NUlOw&callback=initMap">
+    
+  </script>
+</body>
+</html>
